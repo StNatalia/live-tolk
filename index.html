@@ -154,7 +154,13 @@
       <div><span>Пауза микрофона во время озвучки</span><small>Чтобы переводчик не «слышал» сам себя</small></div>
       <input type="checkbox" class="sw" id="muteWhileTts" checked>
     </div>
+    <div class="field">
+      <label>Нидерландский голос (для режима RU → NL)</label>
+      <select id="voiceNl" style="width:100%;padding:12px;border-radius:10px;border:1px solid #2c3442;background:var(--panel2);color:var(--text);font-size:15px"></select>
+      <div class="hint" id="voiceNlHint">Если список пуст — установите на телефоне голос «Nederlands (België)»: приложение «Синтез речи Google» → установка голосовых данных.</div>
+    </div>
     <button id="testVoice" style="width:100%;margin-top:4px;padding:13px;border:none;border-radius:10px;background:var(--panel2);color:var(--text);font-size:15px;cursor:pointer">🔊 Проверить русский голос</button>
+    <button id="testVoiceNl" style="width:100%;margin-top:8px;padding:13px;border:none;border-radius:10px;background:var(--panel2);color:var(--text);font-size:15px;cursor:pointer">🔊 Проверить нидерландский голос</button>
     <button id="closeSheet">Готово</button>
   </div>
 </div>
@@ -182,6 +188,8 @@ const store = {
   set tts(v) { localStorage.setItem("tolk_tts", v ? "1" : "0"); },
   get muteWhileTts()  { return localStorage.getItem("tolk_mwt") !== "0"; },
   set muteWhileTts(v) { localStorage.setItem("tolk_mwt", v ? "1" : "0"); },
+  get voiceNl()  { return localStorage.getItem("tolk_voice_nl") || ""; },
+  set voiceNl(v) { localStorage.setItem("tolk_voice_nl", v); },
 };
 
 /* импорт ключа из ссылки вида ...#key=XXX — сохраняем и сразу чистим адрес */
@@ -206,7 +214,7 @@ const store = {
 })();
 
 /* ---------- UI настроек ---------- */
-$("settingsBtn").onclick = () => $("sheet").classList.add("open");
+$("settingsBtn").onclick = () => { $("sheet").classList.add("open"); if (typeof paintVoiceSelect === "function") paintVoiceSelect(); };
 $("closeSheet").onclick = () => {
   store.key = $("apiKey").value.trim();
   $("sheet").classList.remove("open");
@@ -226,6 +234,18 @@ $("ttsOn").checked = store.tts;
 $("ttsOn").onchange = e => { store.tts = e.target.checked; paintTtsBtn(); };
 $("muteWhileTts").checked = store.muteWhileTts;
 $("muteWhileTts").onchange = e => { store.muteWhileTts = e.target.checked; };
+
+$("voiceNl").onchange = e => { store.voiceNl = e.target.value; };
+
+$("testVoiceNl").onclick = () => {
+  unlockTts();
+  const wasOn = store.tts; store.tts = true;
+  const v = pickVoice("nl");
+  speak("Goedemiddag! Ik wil morgen naar de winkel gaan. Tot ziens!", "nl");
+  store.tts = wasOn;
+  if (!v) addNote("Нидерландский голос не найден на телефоне. Установите «Nederlands (België)»: приложение «Синтез речи Google» → ⚙️ → установка голосовых данных → Nederlands (België). Потом перезагрузите страницу.");
+  else addNote("Говорит голос: " + v.name + " (" + v.lang + "). Если акцент плохой — выберите другой в списке и проверьте снова.");
+};
 
 $("testVoice").onclick = () => {
   unlockTts();
@@ -334,10 +354,52 @@ function esc(s) { return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
    ============================================================ */
 let ttsSpeaking = false;
 let VOICES = [];
-function loadVoices() { try { VOICES = speechSynthesis.getVoices() || []; } catch(e) {} }
+function loadVoices() {
+  try { VOICES = speechSynthesis.getVoices() || []; } catch(e) {}
+  paintVoiceSelect();
+}
 if ("speechSynthesis" in window) {
   loadVoices();
   speechSynthesis.onvoiceschanged = loadVoices; // на Android список приходит с задержкой
+}
+
+function nlVoicePool() {
+  return VOICES.filter(v => (v.lang || "").toLowerCase().replace("_","-").startsWith("nl"));
+}
+
+/* выбор голоса: для NL — сохранённый пользователем, иначе бельгийский (nl-BE), иначе любой nl */
+function pickVoice(lang) {
+  if (lang === "ru") return VOICES.find(v => (v.lang || "").toLowerCase().startsWith("ru")) || null;
+  const pool = nlVoicePool();
+  if (!pool.length) return null;
+  const saved = store.voiceNl && pool.find(v => v.name === store.voiceNl);
+  if (saved) return saved;
+  return pool.find(v => /be/i.test((v.lang || "").replace("_","-").split("-")[1] || ""))
+      || pool.find(v => /nl-nl/i.test((v.lang || "").replace("_","-")))
+      || pool[0];
+}
+
+function paintVoiceSelect() {
+  const sel = $("voiceNl");
+  if (!sel) return;
+  const pool = nlVoicePool();
+  sel.innerHTML = "";
+  if (!pool.length) {
+    const o = document.createElement("option");
+    o.value = ""; o.textContent = "— нидерландские голоса не найдены —";
+    sel.appendChild(o);
+    return;
+  }
+  const auto = document.createElement("option");
+  auto.value = ""; auto.textContent = "Авто (предпочитать бельгийский)";
+  sel.appendChild(auto);
+  for (const v of pool) {
+    const o = document.createElement("option");
+    o.value = v.name;
+    o.textContent = v.name + " (" + v.lang + ")";
+    if (v.name === store.voiceNl) o.selected = true;
+    sel.appendChild(o);
+  }
 }
 
 /* телефоны разрешают TTS только из обработчика нажатия — разблокируем в момент клика */
@@ -358,9 +420,9 @@ function speak(text, lang, isRetry) {
   if (!store.tts || !("speechSynthesis" in window)) return;
   try { speechSynthesis.resume(); } catch(e) {} // iOS иногда «замораживает» синтез
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = lang === "ru" ? "ru-RU" : "nl-NL";
   if (!VOICES.length) loadVoices();
-  const v = VOICES.find(v => v.lang.toLowerCase().startsWith(u.lang.toLowerCase().slice(0,2)));
+  const v = pickVoice(lang);
+  u.lang = v ? v.lang : (lang === "ru" ? "ru-RU" : "nl-BE");
   if (v) u.voice = v;
   else if (VOICES.length && lang === "ru" && !warnedNoVoice) {
     warnedNoVoice = true;
