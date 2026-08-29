@@ -421,6 +421,14 @@ async function initSession() {
   return resp.json(); // { id, url }
 }
 
+/* Gladia шлёт транскрипт с id «00_00000003», а перевод — с utterance_id «3».
+   Нормализуем оба к номеру фразы. */
+function normId(id) {
+  const tail = String(id ?? "").split("_").pop();
+  const n = parseInt(tail, 10);
+  return Number.isNaN(n) ? String(id) : String(n);
+}
+
 function handleMessage(msg) {
   if (msg.type === "transcript") {
     const u = msg.data.utterance;
@@ -431,14 +439,25 @@ function handleMessage(msg) {
     partialEl.textContent = "";
     const text = (u.text || "").trim();
     if (!text) return;
-    const rec = { src: text, srcLang: u.language || modeConfig().languages[0], dst: "", dstLang: "" };
-    finals.set(msg.data.id, rec);
+    const nid = normId(msg.data.id);
+    const rec = { src: text, srcLang: u.language || modeConfig().languages[0], dst: "", dstLang: "", start: u.start };
+    finals.set(nid, rec);
     // предохранитель: если перевод не пришёл за 4с — выводим без него
-    rec.timer = setTimeout(() => { if (!rec.done) { rec.done = true; finals.delete(msg.data.id); pushSegment(seal(rec)); } }, 4000);
+    rec.timer = setTimeout(() => { if (!rec.done) { rec.done = true; finals.delete(nid); pushSegment(seal(rec)); } }, 4000);
   }
   else if (msg.type === "translation") {
     const d = msg.data;
-    const rec = finals.get(d.utterance_id);
+    let nid = normId(d.utterance_id);
+    let rec = finals.get(nid);
+    if (!rec) { // страховка: ищем по времени начала или по тексту оригинала
+      const uStart = d.utterance && d.utterance.start;
+      const uText = ((d.utterance && d.utterance.text) || "").trim();
+      for (const [k, r] of finals) {
+        if ((typeof uStart === "number" && typeof r.start === "number" && Math.abs(r.start - uStart) < 0.25) || (uText && r.src === uText)) {
+          rec = r; nid = k; break;
+        }
+      }
+    }
     // в режиме «оба» приходят переводы на оба языка — берём перевод НЕ на язык оригинала
     if (!rec || rec.done) return;
     if (d.target_language === (d.original_language || rec.srcLang)) return;
@@ -446,7 +465,7 @@ function handleMessage(msg) {
     rec.dstLang = d.target_language;
     rec.done = true;
     clearTimeout(rec.timer);
-    finals.delete(d.utterance_id);
+    finals.delete(nid);
     pushSegment(seal(rec));
   }
   else if (msg.type === "audio_chunk" || msg.type === "acknowledgment") { /* ignore */ }
