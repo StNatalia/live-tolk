@@ -154,6 +154,7 @@
       <div><span>Пауза микрофона во время озвучки</span><small>Чтобы переводчик не «слышал» сам себя</small></div>
       <input type="checkbox" class="sw" id="muteWhileTts" checked>
     </div>
+    <button id="testVoice" style="width:100%;margin-top:4px;padding:13px;border:none;border-radius:10px;background:var(--panel2);color:var(--text);font-size:15px;cursor:pointer">🔊 Проверить русский голос</button>
     <button id="closeSheet">Готово</button>
   </div>
 </div>
@@ -215,6 +216,19 @@ $("ttsOn").checked = store.tts;
 $("ttsOn").onchange = e => { store.tts = e.target.checked; paintTtsBtn(); };
 $("muteWhileTts").checked = store.muteWhileTts;
 $("muteWhileTts").onchange = e => { store.muteWhileTts = e.target.checked; };
+
+$("testVoice").onclick = () => {
+  unlockTts();
+  const wasOn = store.tts; store.tts = true;
+  speak("Проверка. Так будет звучать перевод.", "ru");
+  store.tts = wasOn;
+  setTimeout(() => {
+    if (!speechSynthesis.speaking && !speechSynthesis.pending) {
+      addNote("Голос не заговорил. Проверьте: телефон не в беззвучном режиме (важно для iPhone), громкость медиа не на нуле, и установлен ли русский голос в синтезе речи телефона.");
+      $("sheet").classList.remove("open");
+    }
+  }, 1500);
+};
 
 muteTtsBtn.onclick = () => { store.tts = !store.tts; $("ttsOn").checked = store.tts; if (!store.tts) speechSynthesis.cancel(); paintTtsBtn(); };
 function paintTtsBtn(){ muteTtsBtn.textContent = store.tts ? "🔊" : "🔇"; }
@@ -307,19 +321,44 @@ function esc(s) { return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
    ОЗВУЧКА (Web Speech Synthesis)
    ============================================================ */
 let ttsSpeaking = false;
+let VOICES = [];
+function loadVoices() { try { VOICES = speechSynthesis.getVoices() || []; } catch(e) {} }
+if ("speechSynthesis" in window) {
+  loadVoices();
+  speechSynthesis.onvoiceschanged = loadVoices; // на Android список приходит с задержкой
+}
+
+/* телефоны разрешают TTS только из обработчика нажатия — разблокируем в момент клика */
+let ttsUnlocked = false;
+function unlockTts() {
+  if (ttsUnlocked || !("speechSynthesis" in window)) return;
+  try {
+    speechSynthesis.resume();
+    const u = new SpeechSynthesisUtterance(" ");
+    u.volume = 0;
+    speechSynthesis.speak(u);
+    ttsUnlocked = true;
+  } catch(e) {}
+}
+
+let warnedNoVoice = false;
 function speak(text, lang) {
   if (!store.tts || !("speechSynthesis" in window)) return;
+  try { speechSynthesis.resume(); } catch(e) {} // iOS иногда «замораживает» синтез
   const u = new SpeechSynthesisUtterance(text);
   u.lang = lang === "ru" ? "ru-RU" : "nl-NL";
-  const voices = speechSynthesis.getVoices();
-  const v = voices.find(v => v.lang.toLowerCase().startsWith(u.lang.toLowerCase().slice(0,2)));
+  if (!VOICES.length) loadVoices();
+  const v = VOICES.find(v => v.lang.toLowerCase().startsWith(u.lang.toLowerCase().slice(0,2)));
   if (v) u.voice = v;
+  else if (VOICES.length && lang === "ru" && !warnedNoVoice) {
+    warnedNoVoice = true;
+    addNote("На этом телефоне не найден русский голос. Android: установите «Синтез речи Google» и русский язык в настройках. iPhone: Настройки → Универсальный доступ → VoiceOver-речь/Устный контент → добавить русский голос.");
+  }
   u.rate = 1.05;
   u.onstart = () => { ttsSpeaking = true; };
   u.onend = u.onerror = () => { ttsSpeaking = !!speechSynthesis.pending; };
   speechSynthesis.speak(u);
 }
-if ("speechSynthesis" in window) speechSynthesis.getVoices(); // прогрев списка голосов
 
 /* ============================================================
    GLADIA LIVE: сессия + WebSocket
@@ -488,7 +527,6 @@ async function start() {
     mainBtn.textContent = "■ Стоп";
     mainBtn.classList.add("stop");
     if ("wakeLock" in navigator) { try { wakeLock = await navigator.wakeLock.request("screen"); } catch(e){} }
-    if (store.tts) { const u = new SpeechSynthesisUtterance(""); speechSynthesis.speak(u); } // разблокировка TTS на iOS
   } catch (e) {
     setStatus("err", "ошибка");
     addNote("⚠️ " + e.message);
@@ -522,7 +560,7 @@ function addNote(text) {
   feed.appendChild(el); feed.scrollTop = feed.scrollHeight;
 }
 
-mainBtn.onclick = () => { running ? stop() : start(); };
+mainBtn.onclick = () => { unlockTts(); running ? stop() : start(); };
 
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && running && !wakeLock && "wakeLock" in navigator) {
