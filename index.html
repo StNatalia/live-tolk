@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0f1115">
+<title>Tolk — живой переводчик NL↔RU</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181c24; --panel2: #1f2530;
+    --text: #e8ebf0; --muted: #8b94a3; --accent: #4da3ff;
+    --nl: #ffd166; --ru: #7ee0a3; --danger: #ff6b6b;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+    height: 100dvh; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: var(--panel);
+    flex: 0 0 auto;
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 700; }
+  header .status {
+    margin-left: auto; font-size: 12px; color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #555; }
+  .dot.live { background: #35d073; box-shadow: 0 0 8px #35d073; animation: pulse 1.2s infinite; }
+  .dot.err  { background: var(--danger); }
+  .dot.conn { background: #f4c542; }
+  @keyframes pulse { 50% { opacity: .5; } }
+
+  #settingsBtn {
+    background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; padding: 4px;
+  }
+
+  #feed {
+    flex: 1 1 auto; overflow-y: auto; padding: 12px 14px 8px;
+    display: flex; flex-direction: column; gap: 10px;
+    scroll-behavior: smooth;
+  }
+  .card {
+    background: var(--panel); border-radius: var(--radius);
+    padding: 10px 14px; max-width: 100%;
+    animation: fadeIn .25s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px);} }
+  .card .src { color: var(--muted); font-size: 14px; line-height: 1.35; }
+  .card .src::before { content: attr(data-flag) " "; }
+  .card .dst { font-size: 18px; line-height: 1.4; margin-top: 6px; font-weight: 600; }
+  .card.holding { border-left: 3px solid var(--nl); opacity: .85; }
+  .card.holding .dst { color: var(--muted); font-weight: 400; font-style: italic; font-size: 15px; }
+
+  #partial {
+    color: var(--muted); font-style: italic; font-size: 15px;
+    padding: 4px 14px 10px; min-height: 24px; flex: 0 0 auto;
+  }
+
+  footer {
+    flex: 0 0 auto; padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+    background: var(--panel); display: flex; gap: 10px; align-items: center;
+  }
+  #mainBtn {
+    flex: 1; border: none; border-radius: var(--radius);
+    padding: 16px; font-size: 18px; font-weight: 700; cursor: pointer;
+    background: var(--accent); color: #06121f;
+  }
+  #mainBtn.stop { background: var(--danger); color: #fff; }
+  #mainBtn:disabled { opacity: .5; }
+  #muteTtsBtn {
+    border: none; border-radius: var(--radius); padding: 14px 16px;
+    background: var(--panel2); color: var(--text); font-size: 20px; cursor: pointer;
+  }
+
+  /* Settings sheet */
+  #sheet {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: none; z-index: 10;
+  }
+  #sheet.open { display: block; }
+  #sheetBody {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--panel); border-radius: 18px 18px 0 0;
+    padding: 18px 18px calc(20px + env(safe-area-inset-bottom));
+    max-height: 85dvh; overflow-y: auto;
+  }
+  #sheetBody h2 { margin: 0 0 14px; font-size: 16px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .field input[type=password], .field input[type=text] {
+    width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #2c3442;
+    background: var(--panel2); color: var(--text); font-size: 15px;
+  }
+  .seg { display: flex; border-radius: 10px; overflow: hidden; border: 1px solid #2c3442; }
+  .seg button {
+    flex: 1; padding: 11px 4px; border: none; background: var(--panel2);
+    color: var(--muted); font-size: 13.5px; cursor: pointer;
+  }
+  .seg button.on { background: var(--accent); color: #06121f; font-weight: 700; }
+  .switchRow { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+  .switchRow span { font-size: 14.5px; }
+  .switchRow small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  input[type=checkbox].sw { width: 46px; height: 26px; appearance: none; background: #2c3442; border-radius: 13px; position: relative; cursor: pointer; flex: 0 0 auto; }
+  input[type=checkbox].sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #8b94a3; transition: .15s; }
+  input[type=checkbox].sw:checked { background: var(--accent); }
+  input[type=checkbox].sw:checked::after { left: 23px; background: #fff; }
+  #closeSheet { width: 100%; margin-top: 8px; padding: 13px; border: none; border-radius: 10px; background: var(--accent); color: #06121f; font-size: 15px; font-weight: 700; cursor: pointer; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.4; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎧 Tolk</h1>
+  <div class="status"><div class="dot" id="dot"></div><span id="statusText">выключен</span></div>
+  <button id="settingsBtn" title="Настройки">⚙️</button>
+</header>
+
+<div id="feed"></div>
+<div id="partial"></div>
+
+<footer>
+  <button id="mainBtn">▶ Начать слушать</button>
+  <button id="muteTtsBtn" title="Озвучка вкл/выкл">🔊</button>
+</footer>
+
+<div id="sheet">
+  <div id="sheetBody">
+    <h2>Настройки</h2>
+    <div class="field">
+      <label>API-ключ Gladia (сохраняется только в этом браузере)</label>
+      <input type="password" id="apiKey" placeholder="Вставьте ключ...">
+    </div>
+    <div class="field">
+      <label>Направление перевода</label>
+      <div class="seg" id="modeSeg">
+        <button data-mode="nl2ru">NL → RU</button>
+        <button data-mode="ru2nl">RU → NL</button>
+        <button data-mode="both">Оба (авто)</button>
+      </div>
+      <div class="hint">«Оба» — распознаёт и нидерландский, и русский, переводит каждого в сторону собеседника.</div>
+    </div>
+    <div class="switchRow">
+      <div><span>Озвучивать перевод голосом</span><small>Можно быстро выключать кнопкой 🔊</small></div>
+      <input type="checkbox" class="sw" id="ttsOn" checked>
+    </div>
+    <div class="switchRow">
+      <div><span>Пауза микрофона во время озвучки</span><small>Чтобы переводчик не «слышал» сам себя</small></div>
+      <input type="checkbox" class="sw" id="muteWhileTts" checked>
+    </div>
+    <button id="closeSheet">Готово</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================
+   Tolk — живой переводчик NL↔RU на базе Gladia Live API.
+   Смысловой endpointing: финальные куски от Gladia (акустические
+   паузы) склеиваются, пока фраза не завершена по смыслу.
+   ============================================================ */
+
+const $ = id => document.getElementById(id);
+const feed = $("feed"), partialEl = $("partial");
+const dot = $("dot"), statusText = $("statusText");
+const mainBtn = $("mainBtn"), muteTtsBtn = $("muteTtsBtn");
+
+/* ---------- настройки (localStorage) ---------- */
+const store = {
+  get key()  { return localStorage.getItem("gladia_key") || ""; },
+  set key(v) { localStorage.setItem("gladia_key", v); },
+  get mode() { return localStorage.getItem("tolk_mode") || "nl2ru"; },
+  set mode(v){ localStorage.setItem("tolk_mode", v); },
+  get tts()  { return localStorage.getItem("tolk_tts") !== "0"; },
+  set tts(v) { localStorage.setItem("tolk_tts", v ? "1" : "0"); },
+  get muteWhileTts()  { return localStorage.getItem("tolk_mwt") !== "0"; },
+  set muteWhileTts(v) { localStorage.setItem("tolk_mwt", v ? "1" : "0"); },
+};
+
+/* dev-удобство: на localhost можно положить рядом key.txt */
+(async () => {
+  if (!store.key && (location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+    try {
+      const r = await fetch("key.txt");
+      if (r.ok) { const t = (await r.text()).trim(); if (t) { store.key = t; } }
+    } catch (e) { /* нет файла — ок */ }
+  }
+  $("apiKey").value = store.key;
+})();
+
+/* ---------- UI настроек ---------- */
+$("settingsBtn").onclick = () => $("sheet").classList.add("open");
+$("closeSheet").onclick = () => {
+  store.key = $("apiKey").value.trim();
+  $("sheet").classList.remove("open");
+};
+$("sheet").addEventListener("click", e => { if (e.target === $("sheet")) $("closeSheet").click(); });
+
+function paintMode() {
+  document.querySelectorAll("#modeSeg button").forEach(b =>
+    b.classList.toggle("on", b.dataset.mode === store.mode));
+}
+document.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => {
+  store.mode = b.dataset.mode; paintMode();
+  if (running) { statusText.textContent = "смена режима — перезапуск..."; restart(); }
+});
+paintMode();
+$("ttsOn").checked = store.tts;
+$("ttsOn").onchange = e => { store.tts = e.target.checked; paintTtsBtn(); };
+$("muteWhileTts").checked = store.muteWhileTts;
+$("muteWhileTts").onchange = e => { store.muteWhileTts = e.target.checked; };
+
+muteTtsBtn.onclick = () => { store.tts = !store.tts; $("ttsOn").checked = store.tts; if (!store.tts) speechSynthesis.cancel(); paintTtsBtn(); };
+function paintTtsBtn(){ muteTtsBtn.textContent = store.tts ? "🔊" : "🔇"; }
+paintTtsBtn();
+
+/* ---------- статус ---------- */
+function setStatus(kind, text) {
+  dot.className = "dot" + (kind ? " " + kind : "");
+  statusText.textContent = text;
+}
+
+/* ============================================================
+   СМЫСЛОВОЙ ENDPOINTING
+   ============================================================ */
+const HOLD_MS = 3500;        // сколько ждём продолжения незавершённой фразы
+const FLUSH_COMPLETE_MS = 300; // короткая задержка перед выводом завершённой фразы
+
+// слова, которыми предложение закончиться не может (союзы, предлоги, артикли)
+const HANG_WORDS = {
+  nl: new Set(["en","maar","of","want","dus","omdat","dat","als","toen","terwijl","hoewel","voordat","nadat","zodat","de","het","een","te","naar","met","van","bij","aan","voor","onder","tussen","zonder","per"]),
+  ru: new Set(["и","а","но","или","что","чтобы","если","когда","потому","как","который","которая","в","на","с","у","к","от","до","за","под","над","про","при","без","для","из","по","о","об"]),
+};
+
+function isComplete(text, lang) {
+  const t = (text || "").trim();
+  if (!t) return false;
+  const last = t[t.length - 1];
+  if ("?!…".includes(last)) return true;               // вопрос/восклицание — точно конец
+  if (last !== ".") return false;                      // нет финального знака — ждём
+  const words = t.toLowerCase().replace(/[.?!…,;:]+$/,"").split(/\s+/);
+  const lastWord = words[words.length - 1] || "";
+  const hang = HANG_WORDS[lang] || HANG_WORDS.nl;
+  return !hang.has(lastWord);                          // «Ik ga naar de.» — всё равно ждём
+}
+
+/* буфер незавершённой фразы */
+let buf = null;        // { src, dst, srcLang, dstLang, timer, cardEl }
+let holdTimer = null;
+
+function clearHold() { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } }
+
+function pushSegment(seg) { // seg: {src, dst, srcLang, dstLang}
+  clearHold();
+  if (buf && buf.srcLang === seg.srcLang) {
+    buf.src = (buf.src + " " + seg.src).trim();
+    buf.dst = (buf.dst + " " + seg.dst).trim();
+  } else {
+    if (buf) flush();  // сменился язык говорящего — прошлое выводим как есть
+    buf = { src: seg.src, dst: seg.dst, srcLang: seg.srcLang, dstLang: seg.dstLang, cardEl: null };
+  }
+  renderHolding();
+  if (isComplete(buf.src, buf.srcLang)) {
+    holdTimer = setTimeout(flush, FLUSH_COMPLETE_MS);
+  } else {
+    holdTimer = setTimeout(flush, HOLD_MS);  // предохранитель: не молчать вечно
+  }
+}
+
+function renderHolding() {
+  if (!buf) return;
+  if (!buf.cardEl) {
+    buf.cardEl = document.createElement("div");
+    buf.cardEl.className = "card holding";
+    feed.appendChild(buf.cardEl);
+  }
+  buf.cardEl.innerHTML =
+    `<div class="src" data-flag="${flag(buf.srcLang)}">${esc(buf.src)}</div>` +
+    `<div class="dst">ещё говорит…</div>`;
+  feed.scrollTop = feed.scrollHeight;
+}
+
+function flush() {
+  clearHold();
+  if (!buf) return;
+  const b = buf; buf = null;
+  const el = b.cardEl || document.createElement("div");
+  el.className = "card";
+  el.innerHTML =
+    `<div class="src" data-flag="${flag(b.srcLang)}">${esc(b.src)}</div>` +
+    `<div class="dst" style="color:${b.dstLang==='ru' ? 'var(--ru)' : 'var(--nl)'}">${esc(b.dst || "—")}</div>`;
+  if (!el.parentNode) feed.appendChild(el);
+  feed.scrollTop = feed.scrollHeight;
+  if (b.dst) speak(b.dst, b.dstLang);
+}
+
+function flag(lang) { return lang === "nl" ? "🇧🇪" : lang === "ru" ? "🇷🇺" : "🎙"; }
+function esc(s) { return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ============================================================
+   ОЗВУЧКА (Web Speech Synthesis)
+   ============================================================ */
+let ttsSpeaking = false;
+function speak(text, lang) {
+  if (!store.tts || !("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = lang === "ru" ? "ru-RU" : "nl-NL";
+  const voices = speechSynthesis.getVoices();
+  const v = voices.find(v => v.lang.toLowerCase().startsWith(u.lang.toLowerCase().slice(0,2)));
+  if (v) u.voice = v;
+  u.rate = 1.05;
+  u.onstart = () => { ttsSpeaking = true; };
+  u.onend = u.onerror = () => { ttsSpeaking = !!speechSynthesis.pending; };
+  speechSynthesis.speak(u);
+}
+if ("speechSynthesis" in window) speechSynthesis.getVoices(); // прогрев списка голосов
+
+/* ============================================================
+   GLADIA LIVE: сессия + WebSocket
+   ============================================================ */
+let running = false, ws = null, mediaStream = null, audioCtx = null, workletNode = null, procNode = null;
+const finals = new Map();  // id -> {src, srcLang, dst, dstLang, timer}
+
+function modeConfig() {
+  switch (store.mode) {
+    case "ru2nl": return { languages: ["ru"], code_switching: false, targets: ["nl"] };
+    case "both":  return { languages: ["nl","ru"], code_switching: true, targets: ["nl","ru"] };
+    default:      return { languages: ["nl"], code_switching: false, targets: ["ru"] };
+  }
+}
+
+async function initSession() {
+  const cfg = modeConfig();
+  const resp = await fetch("https://api.gladia.io/v2/live", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-gladia-key": store.key },
+    body: JSON.stringify({
+      encoding: "wav/pcm", bit_depth: 16, sample_rate: 16000, channels: 1,
+      endpointing: 0.8,
+      maximum_duration_without_endpointing: 12,
+      language_config: { languages: cfg.languages, code_switching: cfg.code_switching },
+      realtime_processing: {
+        translation: true,
+        translation_config: {
+          target_languages: cfg.targets,
+          model: "base",
+          match_original_utterances: true,
+          context_adaptation: true,
+        },
+      },
+    }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`Gladia ${resp.status}: ${t.slice(0,200)}`);
+  }
+  return resp.json(); // { id, url }
+}
+
+function handleMessage(msg) {
+  if (msg.type === "transcript") {
+    const u = msg.data.utterance;
+    if (!msg.data.is_final) {
+      partialEl.textContent = "… " + u.text;
+      return;
+    }
+    partialEl.textContent = "";
+    const text = (u.text || "").trim();
+    if (!text) return;
+    const rec = { src: text, srcLang: u.language || modeConfig().languages[0], dst: "", dstLang: "" };
+    finals.set(msg.data.id, rec);
+    // предохранитель: если перевод не пришёл за 4с — выводим без него
+    rec.timer = setTimeout(() => { if (!rec.done) { rec.done = true; finals.delete(msg.data.id); pushSegment(seal(rec)); } }, 4000);
+  }
+  else if (msg.type === "translation") {
+    const d = msg.data;
+    const rec = finals.get(d.utterance_id);
+    // в режиме «оба» приходят переводы на оба языка — берём перевод НЕ на язык оригинала
+    if (!rec || rec.done) return;
+    if (d.target_language === (d.original_language || rec.srcLang)) return;
+    rec.dst = (d.translated_utterance && d.translated_utterance.text || "").trim();
+    rec.dstLang = d.target_language;
+    rec.done = true;
+    clearTimeout(rec.timer);
+    finals.delete(d.utterance_id);
+    pushSegment(seal(rec));
+  }
+  else if (msg.type === "audio_chunk" || msg.type === "acknowledgment") { /* ignore */ }
+}
+
+function seal(rec) {
+  if (!rec.dstLang) rec.dstLang = rec.srcLang === "ru" ? "nl" : "ru";
+  return rec;
+}
+
+/* ---------- захват звука ---------- */
+const WORKLET_CODE = `
+class PcmSender extends AudioWorkletProcessor {
+  constructor() { super(); this.buf = []; this.len = 0; }
+  process(inputs) {
+    const ch = inputs[0] && inputs[0][0];
+    if (ch) {
+      this.buf.push(ch.slice(0)); this.len += ch.length;
+      if (this.len >= 3200) {  // ~200мс при 16кГц... фактическая частота контекста может отличаться
+        const all = new Float32Array(this.len);
+        let o = 0; for (const b of this.buf) { all.set(b, o); o += b.length; }
+        this.port.postMessage(all, [all.buffer]);
+        this.buf = []; this.len = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("pcm-sender", PcmSender);`;
+
+function downsampleTo16k(float32, srcRate) {
+  if (srcRate === 16000) return float32;
+  const ratio = srcRate / 16000;
+  const outLen = Math.floor(float32.length / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const start = Math.floor(i * ratio), end = Math.min(Math.floor((i + 1) * ratio), float32.length);
+    let sum = 0; for (let j = start; j < end; j++) sum += float32[j];
+    out[i] = sum / Math.max(1, end - start);
+  }
+  return out;
+}
+function toInt16(float32) {
+  const out = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    const s = Math.max(-1, Math.min(1, float32[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+
+function sendAudio(float32, srcRate) {
+  if (!ws || ws.readyState !== 1) return;
+  if (store.muteWhileTts && ttsSpeaking && store.mode !== "both") return; // не слушаем сами себя
+  const pcm = toInt16(downsampleTo16k(float32, srcRate));
+  ws.send(pcm.buffer);
+}
+
+async function startAudio() {
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+  });
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await audioCtx.resume();
+  const srcRate = audioCtx.sampleRate;
+  const source = audioCtx.createMediaStreamSource(mediaStream);
+  try {
+    const blobUrl = URL.createObjectURL(new Blob([WORKLET_CODE], { type: "application/javascript" }));
+    await audioCtx.audioWorklet.addModule(blobUrl);
+    workletNode = new AudioWorkletNode(audioCtx, "pcm-sender");
+    workletNode.port.onmessage = e => sendAudio(e.data, srcRate);
+    source.connect(workletNode); workletNode.connect(audioCtx.destination);
+  } catch (e) {  // fallback для старых Safari
+    procNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    procNode.onaudioprocess = ev => sendAudio(ev.inputBuffer.getChannelData(0).slice(0), srcRate);
+    source.connect(procNode); procNode.connect(audioCtx.destination);
+  }
+}
+
+/* ---------- жизненный цикл ---------- */
+let wakeLock = null;
+async function start() {
+  if (!store.key) { $("sheet").classList.add("open"); $("apiKey").focus(); return; }
+  mainBtn.disabled = true;
+  setStatus("conn", "подключение...");
+  try {
+    const session = await initSession();
+    await startAudio();
+    ws = new WebSocket(session.url);
+    ws.onopen = () => { setStatus("live", "слушаю"); };
+    ws.onmessage = e => { try { handleMessage(JSON.parse(e.data)); } catch (err) {} };
+    ws.onclose = ev => {
+      if (running) { setStatus("conn", "обрыв связи, переподключаюсь..."); setTimeout(restart, 1200); }
+    };
+    ws.onerror = () => {};
+    running = true;
+    mainBtn.textContent = "■ Стоп";
+    mainBtn.classList.add("stop");
+    if ("wakeLock" in navigator) { try { wakeLock = await navigator.wakeLock.request("screen"); } catch(e){} }
+    if (store.tts) { const u = new SpeechSynthesisUtterance(""); speechSynthesis.speak(u); } // разблокировка TTS на iOS
+  } catch (e) {
+    setStatus("err", "ошибка");
+    addNote("⚠️ " + e.message);
+    await stop(false);
+  }
+  mainBtn.disabled = false;
+}
+
+async function stop(userIntent = true) {
+  running = false;
+  clearHold(); if (buf) flush();
+  if (ws) { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: "stop_recording" })); ws.close(1000); } catch(e){} ws = null; }
+  if (workletNode) { try { workletNode.disconnect(); } catch(e){} workletNode = null; }
+  if (procNode) { try { procNode.disconnect(); } catch(e){} procNode = null; }
+  if (audioCtx) { try { await audioCtx.close(); } catch(e){} audioCtx = null; }
+  if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  if (wakeLock) { try { await wakeLock.release(); } catch(e){} wakeLock = null; }
+  finals.clear();
+  partialEl.textContent = "";
+  if (userIntent) setStatus("", "выключен");
+  mainBtn.textContent = "▶ Начать слушать";
+  mainBtn.classList.remove("stop");
+}
+
+async function restart() { await stop(false); if (!running) { await start(); } }
+
+function addNote(text) {
+  const el = document.createElement("div");
+  el.className = "card";
+  el.innerHTML = `<div class="src" data-flag="ℹ️">${esc(text)}</div>`;
+  feed.appendChild(el); feed.scrollTop = feed.scrollHeight;
+}
+
+mainBtn.onclick = () => { running ? stop() : start(); };
+
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && running && !wakeLock && "wakeLock" in navigator) {
+    try { wakeLock = await navigator.wakeLock.request("screen"); } catch(e){}
+  }
+});
+
+addNote("Нажмите «Начать слушать» и положите телефон между собеседниками. Перевод появится текстом и голосом, когда фраза будет закончена.");
+</script>
+</body>
+</html>
