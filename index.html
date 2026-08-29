@@ -310,6 +310,8 @@ function flush() {
     `<div class="src" data-flag="${flag(b.srcLang)}">${esc(b.src)}</div>` +
     `<div class="dst" style="color:${b.dstLang==='ru' ? 'var(--ru)' : 'var(--nl)'}">${esc(b.dst || "—")}</div>`;
   if (!el.parentNode) feed.appendChild(el);
+  el.style.cursor = "pointer";
+  el.onclick = () => { if (b.dst) speak(b.dst, b.dstLang); }; // тап по карточке = озвучить (гарантированно, это жест)
   feed.scrollTop = feed.scrollHeight;
   if (b.dst) speak(b.dst, b.dstLang);
 }
@@ -342,7 +344,7 @@ function unlockTts() {
 }
 
 let warnedNoVoice = false;
-function speak(text, lang) {
+function speak(text, lang, isRetry) {
   if (!store.tts || !("speechSynthesis" in window)) return;
   try { speechSynthesis.resume(); } catch(e) {} // iOS иногда «замораживает» синтез
   const u = new SpeechSynthesisUtterance(text);
@@ -358,6 +360,13 @@ function speak(text, lang) {
   u.onstart = () => { ttsSpeaking = true; };
   u.onend = u.onerror = () => { ttsSpeaking = !!speechSynthesis.pending; };
   speechSynthesis.speak(u);
+  // сторожок: если движок молча «съел» фразу — одна повторная попытка
+  if (!isRetry) setTimeout(() => {
+    if (!speechSynthesis.speaking && !speechSynthesis.pending) {
+      try { speechSynthesis.cancel(); } catch(e) {}
+      speak(text, lang, true);
+    }
+  }, 900);
 }
 
 /* ============================================================
@@ -508,7 +517,7 @@ async function startAudio() {
 }
 
 /* ---------- жизненный цикл ---------- */
-let wakeLock = null;
+let wakeLock = null, ttsKeepalive = null;
 async function start() {
   if (!store.key) { $("sheet").classList.add("open"); $("apiKey").focus(); return; }
   mainBtn.disabled = true;
@@ -527,6 +536,8 @@ async function start() {
     mainBtn.textContent = "■ Стоп";
     mainBtn.classList.add("stop");
     if ("wakeLock" in navigator) { try { wakeLock = await navigator.wakeLock.request("screen"); } catch(e){} }
+    // Chrome «засыпает» на синтезе речи после простоя — будим каждые 5с
+    if ("speechSynthesis" in window) ttsKeepalive = setInterval(() => { try { speechSynthesis.resume(); } catch(e){} }, 5000);
   } catch (e) {
     setStatus("err", "ошибка");
     addNote("⚠️ " + e.message);
@@ -544,6 +555,7 @@ async function stop(userIntent = true) {
   if (audioCtx) { try { await audioCtx.close(); } catch(e){} audioCtx = null; }
   if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
   if (wakeLock) { try { await wakeLock.release(); } catch(e){} wakeLock = null; }
+  if (ttsKeepalive) { clearInterval(ttsKeepalive); ttsKeepalive = null; }
   finals.clear();
   partialEl.textContent = "";
   if (userIntent) setStatus("", "выключен");
@@ -560,7 +572,12 @@ function addNote(text) {
   feed.appendChild(el); feed.scrollTop = feed.scrollHeight;
 }
 
-mainBtn.onclick = () => { unlockTts(); running ? stop() : start(); };
+/* запуск озвучки прямо в жесте нажатия — «тихую» разблокировку телефоны не засчитывают */
+mainBtn.onclick = () => {
+  if (!running && store.tts) speak("Переводчик включён", "ru");
+  else unlockTts();
+  running ? stop() : start();
+};
 
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && running && !wakeLock && "wakeLock" in navigator) {
@@ -568,7 +585,7 @@ document.addEventListener("visibilitychange", async () => {
   }
 });
 
-addNote("Нажмите «Начать слушать» и положите телефон между собеседниками. Перевод появится текстом и голосом, когда фраза будет закончена.");
+addNote("Нажмите «Начать слушать» и положите телефон между собеседниками. Перевод появится текстом и голосом, когда фраза будет закончена. Нажатие на любую карточку озвучивает её ещё раз.");
 </script>
 </body>
 </html>
