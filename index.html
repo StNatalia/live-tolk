@@ -184,6 +184,16 @@ const store = {
   set muteWhileTts(v) { localStorage.setItem("tolk_mwt", v ? "1" : "0"); },
 };
 
+/* импорт ключа из ссылки вида ...#key=XXX — сохраняем и сразу чистим адрес */
+(() => {
+  const m = location.hash.match(/[#&]key=([^&]+)/);
+  if (m) {
+    const k = decodeURIComponent(m[1]).trim();
+    if (k) store.key = k;
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+})();
+
 /* dev-удобство: на localhost можно положить рядом key.txt */
 (async () => {
   if (!store.key && (location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
